@@ -2,6 +2,11 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <Authors>Jose Antonio Villarreal Ortiz</Authors>
+    <Company>Link System Corporation</Company>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageProjectUrl>ftpmanager.lsc.ec</PackageProjectUrl>
+    <Description>Este proyecto es un cliente de servidor ftp.</Description>
   </PropertyGroup>
 
 </Project>

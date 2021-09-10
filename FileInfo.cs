@@ -37,14 +37,49 @@ namespace FtpManager
 
         public string Extension { get; private set; }
         public bool Fail { get; private set; }
+        public string FailMessage { get; private set; }
         private Configuration _configuration { get; set; }
         public int Buffer { get; private set; } = 10240;
+
+
+
+        public FileInfo(Configuration ftpConfiguration)
+        {
+            var port = ftpConfiguration.Port == 0 ? "" : $":{ ftpConfiguration.Port}";
+            this.Buffer = ftpConfiguration.BufferReaderBytes > 0 ? ftpConfiguration.BufferReaderBytes : 10240;
+
+            var uri = $@"ftp://{ftpConfiguration.Server}{port}";
+            var request = (FtpWebRequest)WebRequest.Create(uri);
+            request.Credentials = new NetworkCredential(ftpConfiguration.UserReader.Username, ftpConfiguration.UserReader.Password);
+            request.Method = WebRequestMethods.Ftp.ListDirectory;
+            request.UsePassive = true;
+            try
+            {
+                FtpWebResponse response = (FtpWebResponse)(request.GetResponse());
+                if (response.StatusCode == FtpStatusCode.CommandOK || response.StatusCode == FtpStatusCode.FileActionOK || response.StatusCode == FtpStatusCode.FileStatus)
+                {
+                    this.Fail = false;
+                    this.FailMessage = "";
+                    return;
+                }
+                else
+                {
+                    this.FailMessage = response.StatusDescription;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                this.FailMessage = ex.Message;
+            }
+            this.Fail = true;
+        }
 
         /// <summary>
         /// Crea una intancia de un documento dentro del servidor <b>ftp</b> especificado en la <b>configuración</b>.
         /// </summary>
         /// <param name="ftpConfiguration">Parámetro de configuración para inicializar el servidor ftp.</param>
         /// <param name="filename">Ruta relativa del documento en el servidor ftp. "/DOCUMENTOS/PERSONAL/ETC/documento.pdf"</param>
+
         public FileInfo(Configuration ftpConfiguration, string filename)
         {
             var port = ftpConfiguration.Port == 0 ? "" : $":{ ftpConfiguration.Port}";
@@ -71,6 +106,7 @@ namespace FtpManager
             this._configuration = ftpConfiguration;
             this.DirectoryPath = filename.Substring(0, filename.Length - (this.Name.Length + 1));
             this.FullDirectoryPath = $"ftp://{ftpConfiguration.Server}{port}{this.DirectoryPath}";
+            this.IsDirectory = false;
             try
             {
                 FtpWebResponse response = (FtpWebResponse)(request.GetResponse());
@@ -90,8 +126,14 @@ namespace FtpManager
                         this.Description = response.BannerMessage;
                         this.LastWriteTime = response2.LastModified;
                         this.Exist = true;
-
+                        this.Fail = false;
+                        this.FailMessage = "";
                         response.Close();
+                    }
+                    else
+                    {
+                        this.Fail = true;
+                        this.FailMessage = response2.StatusDescription;
                     }
                 }
             }
@@ -118,18 +160,31 @@ namespace FtpManager
         /// <returns></returns>
         public async Task Delete()
         {
-            FtpWebRequest request = (FtpWebRequest)WebRequest.Create(this.FullName);
-            request.Method = WebRequestMethods.Ftp.DeleteFile;
-            request.Proxy = null;
-            request.UseBinary = false;
-            request.UsePassive = true;
-            request.KeepAlive = false;
-            request.Credentials = new NetworkCredential(this._configuration.UserWriter.Username, this._configuration.UserWriter.Password);
+            if (Exist)
+            {
+                try
+                {
+                    FtpWebRequest request = (FtpWebRequest)WebRequest.Create(this.FullName);
+                    request.Method = WebRequestMethods.Ftp.DeleteFile;
+                    request.Proxy = null;
+                    request.UseBinary = false;
+                    request.UsePassive = true;
+                    request.KeepAlive = false;
+                    request.Credentials = new NetworkCredential(this._configuration.UserWriter.Username, this._configuration.UserWriter.Password);
 
-            FtpWebResponse response = (FtpWebResponse)await request.GetResponseAsync();
-            this.Description = response.StatusDescription;
-            response.Close();
-            this.Exist = false;
+                    FtpWebResponse response = (FtpWebResponse)await request.GetResponseAsync();
+                    this.Description = response.StatusDescription;
+                    response.Close();
+                    this.Exist = false;
+                    Fail = false;
+                    FailMessage = "";
+                }
+                catch (System.Exception ex)
+                {
+                    Fail = true;
+                    FailMessage = ex.Message;
+                }
+            }
         }
 
         /// <summary>
@@ -138,36 +193,50 @@ namespace FtpManager
         /// <returns></returns>
         public async Task<byte[]> ReadAllBytes()
         {
-            var document = default(byte[]);
-            FtpWebRequest request = (FtpWebRequest)WebRequest.Create(this.FullName);
-            request.Method = WebRequestMethods.Ftp.DownloadFile;
-            request.UsePassive = true;
-            request.Credentials = new NetworkCredential(this._configuration.UserReader.Username, this._configuration.UserReader.Password);
-
-            FtpWebResponse response = (FtpWebResponse)await request.GetResponseAsync();
-            Console.WriteLine($"Download Complete, status {response.StatusDescription}");
-            //if (response.StatusCode == FtpStatusCode.CommandOK || response.StatusCode == FtpStatusCode.FileActionOK || response.StatusCode == FtpStatusCode.DataAlreadyOpen)
+            if (Exist)
             {
-                using (Stream responseStream = response.GetResponseStream())
+                try
                 {
-                    StreamReader reader = new StreamReader(responseStream);
-                    var bytes = default(byte[]);
-                    using (var memstream = new MemoryStream())
+                    var document = default(byte[]);
+                    FtpWebRequest request = (FtpWebRequest)WebRequest.Create(this.FullName);
+                    request.Method = WebRequestMethods.Ftp.DownloadFile;
+                    request.UsePassive = true;
+                    request.Credentials = new NetworkCredential(this._configuration.UserReader.Username, this._configuration.UserReader.Password);
+
+                    FtpWebResponse response = (FtpWebResponse)await request.GetResponseAsync();
+                    Console.WriteLine($"Download Complete, status {response.StatusDescription}");
+                    //if (response.StatusCode == FtpStatusCode.CommandOK || response.StatusCode == FtpStatusCode.FileActionOK || response.StatusCode == FtpStatusCode.DataAlreadyOpen)
                     {
-                        var buffer = new byte[this.Buffer];
-                        var bytesRead = default(int);
-                        while ((bytesRead = reader.BaseStream.Read(buffer, 0, buffer.Length)) > 0)
-                            memstream.Write(buffer, 0, bytesRead);
-                        bytes = memstream.ToArray();
-                        document = bytes;
+                        using (Stream responseStream = response.GetResponseStream())
+                        {
+                            StreamReader reader = new StreamReader(responseStream);
+                            var bytes = default(byte[]);
+                            using (var memstream = new MemoryStream())
+                            {
+                                var buffer = new byte[this.Buffer];
+                                var bytesRead = default(int);
+                                while ((bytesRead = reader.BaseStream.Read(buffer, 0, buffer.Length)) > 0)
+                                    memstream.Write(buffer, 0, bytesRead);
+                                bytes = memstream.ToArray();
+                                document = bytes;
+                            }
+                            reader.Close();
+                            response.Close();
+                        }
+                        Console.WriteLine($"Download Complete, status {response.StatusDescription}");
                     }
-                    reader.Close();
-                    response.Close();
+                    this.Length = document.Length;
+                    Fail = false;
+                    FailMessage = "";
+                    return document;
                 }
-                Console.WriteLine($"Download Complete, status {response.StatusDescription}");
+                catch (System.Exception ex)
+                {
+                    Fail = true;
+                    FailMessage = ex.Message;
+                }
             }
-            this.Length = document.Length;
-            return document;
+            return null;
         }
 
         /// <summary>
@@ -176,12 +245,8 @@ namespace FtpManager
         /// <returns></returns>
         public async Task<string> ReadAllText()
         {
-            if (Exist)
-            {
-                var text = Encoding.ASCII.GetString(await ReadAllBytes());
-                return text;
-            }
-            return null;
+            var text = Encoding.ASCII.GetString(await ReadAllBytes());
+            return text;
         }
 
         /// <summary>
